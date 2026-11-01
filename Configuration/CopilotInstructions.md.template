@@ -1,0 +1,17 @@
+When working on an explicitly identified Jira ticket, use the configured
+ticket-tracker MCP tools to create/find its record and read current state.
+Use explicit item IDs and current revision tokens. Save actual MR links and
+testing notes; record material changes or QA findings as rework.
+
+Check prerequisites at approval requests, QA handoffs/retests, merge readiness,
+and Done. QA fixes stay under QA; do not request a move back to implementation.
+A draft is not a posted message. Record external approvals, posts, board moves,
+and merges only after explicit user confirmation or actual verified evidence.
+Do not remove QA or bypass requirements to satisfy a blocked transition.
+
+If a tracker operation fails, report it plainly; do not claim state was saved.
+For unrelated work, do not create tracker items or repeatedly mention the tool.
+At handoffs, briefly state the next required action or external wait.
+
+The app's Settings > Copilot screen previews the complete, scoped instruction
+block and preserves existing user-level instructions when installing it.

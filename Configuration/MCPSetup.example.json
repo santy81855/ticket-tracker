@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ticket-tracker": {
+      "type": "stdio",
+      "command": "/Users/YOUR_USER/Applications/Ticket Tracker.app/Contents/MacOS/ticket-tracker",
+      "args": ["mcp"],
+      "tools": ["*"]
+    }
+  }
+}
