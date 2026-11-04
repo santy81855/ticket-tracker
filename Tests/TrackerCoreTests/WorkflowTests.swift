@@ -475,3 +475,17 @@ func completionTimeCorrectionExcludesBackfilledTicketsAndAuditsActualDate(legacy
       "https://gitlab.example.test/pod/app/-/merge_requests/12/diffs?view=parallel#note")
       == "https://gitlab.example.test/pod/app/-/merge_requests/12")
 }
+
+@Test func kickoffIsNextEvenBeforeTheThreadLinkIsSaved() throws {
+  var item = try Workflow.create(
+    NewItem(kind: .ticket, title: "No thread yet", jira: "https://jira.example.test/browse/WEB-7"),
+    settings: TrackerSettings())
+  item = try record(.jiraStart, item)
+  let kickoff = try #require(ItemSnapshot(item: item, generation: "test").nextStep)
+  #expect(kickoff.kind == .kickoff)
+  #expect(!kickoff.canRecord && kickoff.needsOnlyInput)
+  var patch = DetailsPatch()
+  patch.threadURL = "https://teams.example.test/thread/7"
+  item = try Workflow.apply(.edit(patch), to: item, source: .desktop)
+  #expect(ItemSnapshot(item: item, generation: "test").nextStep?.canRecord == true)
+}

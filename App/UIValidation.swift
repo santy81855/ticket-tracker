@@ -266,6 +266,7 @@
         try await checkDraft(.qa, model: model, window: window, folder: folder, name: "retest")
         try await checkStandupSummary(model: model, store: store, folder: folder)
         try await checkWorkflowEditor(model: model, store: store, window: window, folder: folder)
+        try await checkDocumentViewer(model: model, folder: folder)
         print(
           "PASS: native title bar, wide/tiled/minimum layouts, fixed themes, visible-unfocused animation, breathing guide, embedded terminal tabs, draft routing, completion/cancel/stale-token safety, audited undo, and stand-up summary. Screenshots: \(folder.path)"
         )
@@ -499,6 +500,109 @@
     }
 
     /// Seeds realistic sample work and captures README screenshots across pages and themes.
+    private static func checkDocumentViewer(model: WorkspaceModel, folder: URL) async throws {
+      let browser = BrowserModel.shared
+      let documents = folder.appendingPathComponent("viewer-documents", isDirectory: true)
+      try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+      let plan = documents.appendingPathComponent("ABC-1298-plan.md")
+      let notes = documents.appendingPathComponent("notes.txt")
+      var markdown = """
+        # ABC-1298 · Loyalty banner plan
+
+        Show the **loyalty banner** on the booking summary behind a `remote config` toggle.
+
+        ## Steps
+
+        - [x] Add the `showLoyaltyBanner` flag
+        - [ ] Render the banner in `SummaryView`
+        - [ ] Unit tests for the flag states
+
+        | Platform | Owner | Status |
+        | --- | --- | --- |
+        | iOS | Santiago | In progress |
+        | Android | Priya | Not started |
+
+        ```swift
+        if config.showLoyaltyBanner { LoyaltyBanner() }
+        ```
+
+        > QA: verify with the toggle on and off in staging.
+
+        <script>document.title = "unsafe"</script>
+
+        See the [testing notes](notes.txt).
+        """
+      try Data(markdown.utf8).write(to: plan)
+      try Data("Plain <b>text</b> stays literal.\n".utf8).write(to: notes)
+      let webView = { browser.webView }
+      func run(_ script: String) async throws -> Any? {
+        try await webView().evaluateJavaScript(script)
+      }
+      func waitUntil(_ label: String, _ condition: () async throws -> Bool) async throws {
+        for _ in 0..<40 {
+          if try await condition() { return }
+          try await Task.sleep(for: .milliseconds(150))
+        }
+        throw TrackerError.invalid("File viewer: \(label).")
+      }
+      browser.openFile(plan)
+      try await waitUntil("the plan did not load") {
+        guard !webView().isLoading, webView().url?.path == plan.path else { return false }
+        return try await run("document.querySelectorAll('#doc h1').length") as? Int == 1
+      }
+      let rendered =
+        try await run(
+          "document.querySelectorAll('#doc table, #doc input[type=checkbox], #doc pre code, #doc blockquote').length"
+        ) as? Int ?? 0
+      let scripts = try await run("document.querySelectorAll('#doc script').length") as? Int
+      guard rendered == 6, scripts == 0, webView().title == "ABC-1298-plan.md",
+        browser.address == plan.path
+      else {
+        throw TrackerError.invalid(
+          "File viewer rendered \(rendered) Markdown blocks and \(scripts ?? -1) scripts.")
+      }
+      let tabCount = browser.tabs.count
+      browser.openFile(plan)
+      guard browser.tabs.count == tabCount else {
+        throw TrackerError.invalid("Reopening a shown file added a duplicate tab.")
+      }
+      markdown += "\n\n## Added while open\n"
+      try Data(markdown.utf8).write(to: plan)
+      try await waitUntil("live refresh did not show the edit") {
+        try await run("document.body.innerText.includes('Added while open')") as? Bool == true
+      }
+      try await capture(model, name: "file-viewer", folder: folder)
+      let image = try await webView().takeSnapshot(configuration: nil)
+      if let tiff = image.tiffRepresentation,
+        let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+      {
+        try png.write(to: folder.appendingPathComponent("file-viewer-page.png"))
+      }
+      _ = try await run("document.querySelector('a[href=\"notes.txt\"]').click()")
+      try await waitUntil("a relative link did not open the text file in place") {
+        guard webView().url?.path == notes.path else { return false }
+        let text = try await run("document.querySelector('#doc pre')?.textContent ?? ''")
+        return (text as? String)?.contains("<b>text</b>") == true
+      }
+      guard browser.tabs.count == tabCount else {
+        throw TrackerError.invalid("A document link opened an extra tab.")
+      }
+      webView().goBack()
+      try await waitUntil("going back did not restore the current plan") {
+        guard webView().url?.path == plan.path else { return false }
+        return try await run("document.body.innerText.includes('Added while open')") as? Bool
+          == true
+      }
+      browser.openFile(documents)
+      guard browser.failure?.contains("folder") == true else {
+        throw TrackerError.invalid("Opening a folder did not explain the problem.")
+      }
+      browser.failure = nil
+      browser.close(browser.selected)
+      browser.isVisible = false
+      try await Task.sleep(for: .milliseconds(300))
+    }
+
     private static func showcase(
       model: WorkspaceModel, store: TrackerStore, window: NSWindow, folder: URL
     ) async throws {

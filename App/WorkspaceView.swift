@@ -104,6 +104,7 @@ struct WorkspaceView: View {
     }
     .onAppear {
       QuickSwitcher.shared.configure(model: model) { openWindow(id: "workspace") }
+      BrowserModel.showWorkspace = { openWindow(id: "workspace") }
       if !model.isUISmoke || model.isThemePreview { QuickSwitcher.shared.registerShortcut() }
     }
     .onChange(of: model.search) { _, _ in selectVisible() }

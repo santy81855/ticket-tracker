@@ -185,6 +185,11 @@ public actor TrackerMCPService {
             "True only after the user requested applying the previewed workflow to this existing ticket."
           ),
         ], required: ["op"]),
+      tool(
+        "tracker_open_file",
+        "Show a local file, such as a ticket plan, in the Ticket Tracker app's viewer. Markdown renders formatted; text, PDF and images display as-is. Opens the app if needed and refreshes as the file changes.",
+        fields: ["path": field("string", "Absolute path to an existing file (~ is allowed).")],
+        required: ["path"]),
     ]
   }
 
@@ -432,6 +437,8 @@ public actor TrackerMCPService {
           Messages.draft(kind, item: snapshot.item, settings: await store.settings()))
       case "tracker_workflow":
         return try await workflow(arguments)
+      case "tracker_open_file":
+        return try result(try FileOpener.open(path: try requiredString("path", arguments)))
       default: throw TrackerError.invalid("Unknown tool.")
       }
     } catch {

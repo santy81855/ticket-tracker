@@ -18,6 +18,8 @@ struct TrackerAgent {
                         Read/write the shared workspace using validated operations.
           set-completion-time
                         Correct a completed item's actual finish time with evidence.
+          open-file <path>
+                        Show a plan, Markdown/text file, PDF or image in the app's viewer.
           commands      Print all operation descriptions and JSON input schemas.
           mcp           Serve local MCP tools over stdio (no web server).
           doctor        Report store readiness as JSON.
@@ -118,8 +120,14 @@ struct TrackerAgent {
           itemCount: store.list(limit: 5000).count)
         print(String(decoding: try StoreJSON.encode(health, pretty: true), as: UTF8.self))
       } else {
-        let response = try await TrackerCLI.execute(
-          Array(CommandLine.arguments.dropFirst()), store: store)
+        var arguments = Array(CommandLine.arguments.dropFirst())
+        if command == "open-file", arguments.count == 2, !arguments[1].hasPrefix("--") {
+          let path = URL(fileURLWithPath: (arguments[1] as NSString).expandingTildeInPath)
+            .standardizedFileURL.path
+          let json = String(decoding: try JSONEncoder().encode(["path": path]), as: UTF8.self)
+          arguments = ["open-file", "--json", json]
+        }
+        let response = try await TrackerCLI.execute(arguments, store: store)
         let output = response.isError ? FileHandle.standardError : FileHandle.standardOutput
         try output.write(contentsOf: Data((response.text + "\n").utf8))
         if response.isError { exit(1) }

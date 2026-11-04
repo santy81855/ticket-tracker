@@ -121,6 +121,9 @@ public enum Workflow {
         .jiraDone, "Move Jira to Done", "Confirm the final board move. Your work is complete.",
         "flag.checkered",
         blockers: mergeBlockers + needs(item.allMerged, "Confirm all relevant MRs are merged.")))
+    for index in result.indices {
+      result[index].inputBlockers = result[index].blockers.filter { $0.hasPrefix("Save ") }
+    }
     return result + ConfiguredWorkflow.workspaceSteps(for: item)
   }
 

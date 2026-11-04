@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct TicketTrackerApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var model = WorkspaceModel()
   @AppStorage("workspace.theme") private var theme = WorkspaceTheme.classic
 
@@ -38,6 +39,11 @@ struct TicketTrackerApp: App {
           if model.page.isLibrary { model.newReference() } else { model.showNewItem = true }
         }
         .keyboardShortcut("n")
+        Button("Open File…") {
+          BrowserModel.showWorkspace?()
+          BrowserModel.shared.chooseFile()
+        }
+        .keyboardShortcut("o")
       }
       CommandGroup(replacing: .appSettings) {
         Button("Settings…") { model.showSettings = true }
@@ -52,5 +58,16 @@ struct TicketTrackerApp: App {
     MenuBarExtra("Ticket Tracker", systemImage: "ticket") {
       MenuBarView(model: model)
     }
+  }
+}
+
+/// Files opened with the app (Finder "Open With", `ticket-tracker open-file`) show in the viewer.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+  func application(_ application: NSApplication, open urls: [URL]) {
+    let files = urls.filter(\.isFileURL)
+    guard !files.isEmpty else { return }
+    for file in files { BrowserModel.shared.openFile(file) }
+    BrowserModel.showWorkspace?()
+    NSApp.activate()
   }
 }

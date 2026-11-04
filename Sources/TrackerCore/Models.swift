@@ -244,7 +244,17 @@ public struct WorkflowStep: Codable, Identifiable, Equatable, Sendable {
   public var messageTemplate: String? = nil
   /// Follow-up reminder for a wait step that has waited longer than its configured nudge.
   public var nudge: String? = nil
+  /// Blockers the user clears by entering information (a thread link, testing notes, or
+  /// required fields) rather than by finishing another step.
+  public var inputBlockers: [String]? = nil
   public var canRecord: Bool { state == .pending && blockers.isEmpty && kind != .qaDecision }
+  /// Pending and only waiting on details the user can enter right on the step.
+  public var needsOnlyInput: Bool {
+    state == .pending && kind != .qaDecision && !blockers.isEmpty
+      && blockers.allSatisfy { (inputBlockers ?? []).contains($0) }
+  }
+  /// Whether this step is the user's to act on now (possibly after entering details).
+  public var isActionable: Bool { canRecord || needsOnlyInput }
 }
 
 public struct RevisionToken: Codable, Equatable, Sendable {
@@ -264,7 +274,7 @@ public struct ItemSnapshot: Codable, Identifiable, Equatable, Sendable {
   public var nextStep: WorkflowStep? {
     guard !item.isDone else { return nil }
     let pending = steps.filter { $0.state == .pending && $0.isOptional != true }
-    return pending.first { $0.canRecord && !$0.isWait }
+    return pending.first { $0.isActionable && !$0.isWait }
       ?? pending.first { $0.canRecord }
       ?? pending.first
   }
@@ -277,7 +287,7 @@ public struct ItemSnapshot: Codable, Identifiable, Equatable, Sendable {
     if item.kind == .task {
       return !isWaiting || (item.followUpAt.map { $0 <= Date() } ?? false)
     }
-    return !isWaiting || steps.contains { ($0.canRecord && !$0.isWait) || $0.nudge != nil }
+    return !isWaiting || steps.contains { ($0.isActionable && !$0.isWait) || $0.nudge != nil }
   }
   public var nudges: [WorkflowStep] { item.isDone ? [] : steps.filter { $0.nudge != nil } }
   public var id: String { item.id }

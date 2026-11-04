@@ -124,3 +124,37 @@ import TrackerStore
     ])
   #expect(noQA.isError == true)
 }
+
+@Test func openFileValidatesThePathAndTargetsTheEnclosingApp() throws {
+  let folder = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "TrackerOpenFile-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: folder) }
+  let plan = folder.appendingPathComponent("plan.md")
+  try Data("# Plan".utf8).write(to: plan)
+  let helper = URL(fileURLWithPath: "/Apps/Ticket Tracker.app/Contents/MacOS/ticket-tracker")
+  let launched = LockedBox<[String]>([])
+  let result = try FileOpener.open(path: plan.path, executable: helper) { launched.value = $0 }
+  #expect(launched.value == ["-a", "/Apps/Ticket Tracker.app", plan.path])
+  #expect(result.app == "/Apps/Ticket Tracker.app")
+
+  let devBuild = URL(fileURLWithPath: "/tmp/build/debug/ticket-tracker")
+  _ = try FileOpener.open(path: plan.path, executable: devBuild) { launched.value = $0 }
+  #expect(launched.value == ["-b", FileOpener.bundleIdentifier, plan.path])
+
+  for path in ["plan.md", folder.path, folder.appendingPathComponent("missing.md").path] {
+    #expect(throws: TrackerError.self) {
+      try FileOpener.open(path: path, executable: helper) { _ in Issue.record("Launched \(path)") }
+    }
+  }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Value
+  init(_ value: Value) { stored = value }
+  var value: Value {
+    get { lock.withLock { stored } }
+    set { lock.withLock { stored = newValue } }
+  }
+}

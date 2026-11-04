@@ -31,7 +31,7 @@ let package = Package(
       resources: [
         .copy("Resources/Gargantua"), .copy("Resources/Aurora"), .copy("Resources/Skyline"),
         .copy("Resources/Rain"), .copy("Resources/Nebula"), .copy("Resources/Cabin"),
-        .copy("Resources/Xmas"), .copy("Resources/Bonsai"),
+        .copy("Resources/Xmas"), .copy("Resources/Bonsai"), .copy("Resources/Viewer"),
       ]
     ),
     .testTarget(name: "TrackerCoreTests", dependencies: ["TrackerCore"]),

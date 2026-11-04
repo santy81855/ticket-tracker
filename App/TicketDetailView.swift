@@ -170,7 +170,10 @@ struct TicketDetailView: View {
           horizontal: false, vertical: true)
       }.font(.system(size: 11)).foregroundStyle(.secondary)
       RequiredFieldsEditor(model: model, snapshot: snapshot, step: step)
+      let needsThread = step.blockers.contains(ThreadLinkField.blocker)
+      if needsThread { ThreadLinkField(model: model, snapshot: snapshot) }
       let fieldBlockers = RequiredFieldsEditor.fieldBlockers(for: step, in: item)
+        .union(needsThread ? [ThreadLinkField.blocker] : [])
       let otherBlockers = step.blockers.filter { !fieldBlockers.contains($0) }
       if !otherBlockers.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
@@ -246,6 +249,9 @@ struct TicketDetailView: View {
         }.frame(maxWidth: .infinity)
       }
       .buttonStyle(PrimaryCompletionButtonStyle()).disabled(model.isBusy)
+    } else if step.blockers == [ThreadLinkField.blocker] {
+      Label("Save the thread link above to confirm", systemImage: "link")
+        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
     } else {
       Button("Edit details") { editing = true }.buttonStyle(QuietButtonStyle())
     }
@@ -645,5 +651,33 @@ private struct ActionPromptSheet: View {
     case .undo:
       "Returns the most recent confirmation to pending in this tracker. It does not reverse anything in Jira, Teams, or GitLab. Earlier history is preserved. Explain what was marked by mistake."
     }
+  }
+}
+
+/// Lets the user paste the Teams thread link right on the step that needs it.
+private struct ThreadLinkField: View {
+  static let blocker = "Save the Teams thread link."
+  @ObservedObject var model: WorkspaceModel
+  let snapshot: ItemSnapshot
+  @State private var link = ""
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text("Thread link").font(.system(size: 12, weight: .semibold))
+      TextField("Paste the Teams thread link", text: $link)
+        .textFieldStyle(.roundedBorder).font(.system(size: 12))
+        .onSubmit { Task { await save() } }
+      Button("Save") { Task { await save() } }
+        .buttonStyle(QuietButtonStyle())
+        .disabled(link.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy)
+    }
+  }
+
+  private func save() async {
+    let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty else { return }
+    var patch = DetailsPatch()
+    patch.threadURL = value
+    if await model.mutate(snapshot, .edit(patch)) { link = "" }
   }
 }

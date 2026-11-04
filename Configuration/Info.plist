@@ -15,5 +15,20 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticTermination</key><false/>
     <key>NSUserNotificationAlertStyle</key><string>banner</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Text Document</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>net.daringfireball.markdown</string>
+                <string>public.text</string>
+                <string>com.adobe.pdf</string>
+                <string>public.image</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

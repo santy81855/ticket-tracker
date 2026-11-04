@@ -173,6 +173,7 @@ public enum ConfiguredWorkflow {
           ruleID: rule.id, owner: rule.owner, isOptional: !blocking.contains(rule.id),
           destination: rule.destination, destinationURL: rule.url,
           messageTemplate: rule.messageTemplate)
+        step.inputBlockers = metadataBlockers(rule, item: item)
         step.nudge = nudge(rule, item: item, blockers: reasons, state: state)
         result.append(step)
       }
@@ -216,7 +217,7 @@ public enum ConfiguredWorkflow {
     if isDone(item) { return "Development complete" }
     let pending = steps(for: item).filter { $0.state == .pending && $0.isOptional != true }
     guard
-      let next = pending.first(where: { $0.canRecord && !$0.isWait }) ?? pending.first(
+      let next = pending.first(where: { $0.isActionable && !$0.isWait }) ?? pending.first(
         where: \.canRecord) ?? pending.first
     else {
       return "Needs attention"

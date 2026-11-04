@@ -19,9 +19,12 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   @Published var failure: String?
   @Published var untrusted: (host: String, fingerprint: String, issuer: String)?
   var homeURL = ""
+  /// Brings the workspace window forward; set by the window so file opens can show it.
+  static var showWorkspace: (() -> Void)?
   private static let trustKey = "browser.trustedCertificates"
   private var restore: Task<Void, Never>?
   private var saveTask: Task<Void, Never>?
+  private var fileWatch: Timer?
 
   var selected: BrowserTab { tabs.first { $0.id == selectedID } ?? tabs[0] }
   var webView: WKWebView { selected.webView }
@@ -36,12 +39,21 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
       for cookie in Self.savedSessionCookies() { await store.setCookie(cookie) }
       store.add(self)
     }
+    fileWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+      MainActor.assumeIsolated {
+        let browser = BrowserModel.shared
+        if browser.isVisible { browser.refresh(browser.selected) }
+      }
+    }
   }
 
   private func makeTab(configuration: WKWebViewConfiguration? = nil) -> BrowserTab {
     let configuration = configuration ?? WKWebViewConfiguration()
     if configuration.websiteDataStore !== WKWebsiteDataStore.default() {
       configuration.websiteDataStore = .default()
+    }
+    if configuration.urlSchemeHandler(forURLScheme: DocumentScheme.scheme) == nil {
+      configuration.setURLSchemeHandler(DocumentScheme(), forURLScheme: DocumentScheme.scheme)
     }
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.allowsBackForwardNavigationGestures = true
@@ -60,7 +72,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   }
 
   private func sync() {
-    address = webView.url?.absoluteString ?? ""
+    address = selected.file?.path ?? webView.url?.absoluteString ?? ""
     isLoading = webView.isLoading
     canGoBack = webView.canGoBack
     canGoForward = webView.canGoForward
@@ -75,6 +87,94 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     isVisible = true
     open(url ?? homeURL)
     return tab
+  }
+
+  // MARK: Local files
+
+  /// Shows a local file. Reuses a tab already showing it, otherwise opens a new tab
+  /// (or the current one when it's still blank). `target` replaces that tab's page instead.
+  func openFile(_ file: URL, in target: BrowserTab? = nil) {
+    let url = file.standardizedFileURL
+    isVisible = true
+    if target == nil, let existing = tabs.first(where: { $0.showing(url) }) {
+      select(existing)
+      refresh(existing)
+      return
+    }
+    do {
+      _ = try DocumentViewer.load(url)
+    } catch {
+      failure = "Couldn't open \(url.lastPathComponent). \(error.localizedDescription)"
+      return
+    }
+    let tab: BrowserTab
+    if let target {
+      tab = target
+    } else if selected.webView.url == nil, selected.pendingFile == nil {
+      tab = selected
+    } else {
+      tab = makeTab()
+      tabs.append(tab)
+    }
+    select(tab)
+    tab.pendingFile = url
+    tab.webView.load(URLRequest(url: DocumentScheme.url(for: url)))
+    UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: Self.folderKey)
+  }
+
+  /// Re-renders a file tab in place, keeping its scroll position, when the file changed on disk.
+  func refresh(_ tab: BrowserTab, force: Bool = false) {
+    guard let url = tab.file, !tab.webView.isLoading else { return }
+    let modified = DocumentViewer.modified(url)
+    guard force || tab.shown.path != url.path || tab.shown.modified != modified else { return }
+    tab.shown = (url.path, modified)
+    guard let document = try? DocumentViewer.load(url) else { return }
+    if document.kind == .native {
+      if !force { tab.webView.reload() }
+    } else {
+      tab.webView.evaluateJavaScript(DocumentViewer.renderCall(document))
+    }
+  }
+
+  private static let folderKey = "browser.lastFileFolder"
+
+  func chooseFile() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.message = "Choose a plan, Markdown or text file to view"
+    if let folder = UserDefaults.standard.string(forKey: Self.folderKey) {
+      panel.directoryURL = URL(fileURLWithPath: folder, isDirectory: true)
+    }
+    guard panel.runModal() == .OK else { return }
+    for url in panel.urls { openFile(url) }
+  }
+
+  func webView(
+    _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction
+  ) async -> WKNavigationActionPolicy {
+    guard let url = navigationAction.request.url,
+      let tab = tabs.first(where: { $0.webView === webView })
+    else { return .allow }
+    if url.isFileURL {
+      // Dropped files and file links render through the viewer instead.
+      openFile(url, in: navigationAction.targetFrame == nil ? nil : tab)
+      return .cancel
+    }
+    if url.scheme == DocumentScheme.scheme,
+      let source = navigationAction.sourceFrame.request.url?.scheme?.lowercased(),
+      source == "http" || source == "https"
+    {
+      return .cancel
+    }
+    return .allow
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
+    tab.pendingFile = nil
+    // Back/forward can restore an older render, so show the file as it is now.
+    refresh(tab, force: true)
   }
 
   func select(_ tab: BrowserTab) {
@@ -107,6 +207,14 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   func open(_ text: String) {
     var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !value.isEmpty else { return }
+    if value.hasPrefix("/") || value.hasPrefix("~") {
+      openFile(URL(fileURLWithPath: (value as NSString).expandingTildeInPath), in: selected)
+      return
+    }
+    if value.hasPrefix("file://"), let url = URL(string: value) {
+      openFile(url, in: selected)
+      return
+    }
     if !value.contains("://") { value = "https://" + value }
     guard let url = URL(string: value) else { return }
     Task { @MainActor in
@@ -218,9 +326,13 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   func webView(
     _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
-  ) { report(error) }
+  ) {
+    tabs.first { $0.webView === webView }?.pendingFile = nil
+    report(error)
+  }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    tabs.first { $0.webView === webView }?.pendingFile = nil
     report(error)
   }
 
@@ -239,7 +351,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   }
 
   func openIfEmpty(_ text: String) {
-    if webView.url == nil { open(text) }
+    if webView.url == nil, selected.pendingFile == nil { open(text) }
   }
 
   // Links that ask for a new window open in a new tab.
@@ -263,7 +375,18 @@ final class BrowserTab: Identifiable {
   let id = UUID()
   let webView: WKWebView
   var observations: [NSKeyValueObservation] = []
+  /// The file being loaded into this tab, and the version of the file it last rendered.
+  var pendingFile: URL?
+  var shown: (path: String, modified: Date?) = ("", nil)
   init(webView: WKWebView) { self.webView = webView }
+
+  /// The local file this tab shows, if it's in the document viewer.
+  var file: URL? {
+    guard let url = webView.url, url.scheme == DocumentScheme.scheme else { return nil }
+    return URL(fileURLWithPath: url.path)
+  }
+
+  func showing(_ url: URL) -> Bool { (pendingFile ?? file)?.path == url.path }
 
   var title: String {
     if let title = webView.title, !title.isEmpty { return title }
@@ -299,10 +422,11 @@ struct BrowserPanel: View {
         button(browser.isLoading ? "xmark" : "arrow.clockwise", "Reload") {
           if browser.isLoading { browser.webView.stopLoading() } else { browser.webView.reload() }
         }
-        TextField("Address", text: $typed).textFieldStyle(.roundedBorder)
+        TextField("Address or file path", text: $typed).textFieldStyle(.roundedBorder)
           .onSubmit { browser.open(typed) }
         Button("Board") { browser.open(model.settings.jiraBoardURL) }
           .help("Open the Jira board from Settings")
+        button("doc.text", "Open a file (⌘O)") { browser.chooseFile() }
         button("xmark.circle.fill", "Close browser (⇧⌘B)") { browser.isVisible = false }
       }.padding(10).background(.bar)
       tabBar

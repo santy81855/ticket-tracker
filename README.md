@@ -31,6 +31,9 @@ while you work.
   a sample ticket before publishing.
 - **Built-in terminal and browser:** tabbed terminal and an in-app browser for your
   Jira board, so everything is in one window.
+- **File viewer:** open ticket plans and other Markdown, text, PDF or image files
+  in browser tabs (⌘O, drag and drop, or type a path). Markdown is rendered and
+  refreshes live while the file is edited.
 - **Themes:** light, dark (Dracula, Nord, One Dark, Tokyo Night, Catppuccin, Gruvbox,
   Solarized), and animated scenes (Aurora, Gargantua, Rainy window, Snowy cabin,
   and more).
@@ -113,6 +116,10 @@ Open **Settings → Copilot**:
 The helper CLI is bundled at
 `~/Applications/Ticket Tracker.app/Contents/MacOS/ticket-tracker`. Run it with
 `commands` to see every operation and its JSON input.
+
+Your assistant can show you a plan it wrote with
+`ticket-tracker open-file /path/to/plan.md` (MCP: `tracker_open_file`), which
+opens it in the app's viewer.
 
 ## Development
 

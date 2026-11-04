@@ -16,6 +16,7 @@ public enum TrackerCLI {
     "check": "tracker_check_transition",
     "draft": "tracker_get_message_draft",
     "workflow": "tracker_workflow",
+    "open-file": "tracker_open_file",
   ]
 
   public struct Response: Sendable {

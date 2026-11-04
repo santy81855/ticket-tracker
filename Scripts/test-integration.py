@@ -83,6 +83,7 @@ class CLIClient:
         "tracker_set_completion_time": "set-completion-time",
         "tracker_get_message_draft": "draft",
         "tracker_workflow": "workflow",
+        "tracker_open_file": "open-file",
     }
 
     def __init__(self, executable, directory):
@@ -196,6 +197,8 @@ def check_cli(executable, directory):
     assert {entry["command"] for entry in json.loads(catalog.stdout)} == set(client.operations.values())
     assert not Path(client.environment["TICKET_TRACKER_DATA_DIR"]).exists()
     assert client.tool("tracker_health", {})["ready"]
+    missing = client.tool("tracker_open_file", {"path": str(Path(directory) / "missing-plan.md")}, error=True)
+    assert "No file exists" in json.dumps(missing), missing
     argument_health = subprocess.run(
         [str(executable), "health", "--json", "{}"], capture_output=True, text=True,
         check=True, env=client.environment, timeout=15,
@@ -469,7 +472,7 @@ def main(executable):
         second = None
         try:
             tools = first.request("tools/list", {})
-            assert len(tools["tools"]) == 11
+            assert len(tools["tools"]) == 12
             assert first.tool("tracker_health", {})["ready"]
             context = approvals(first, ticket(first, "APP-101", "notRequired"))
             item_id = context["snapshot"]["item"]["id"]
