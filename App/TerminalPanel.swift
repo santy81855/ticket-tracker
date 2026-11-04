@@ -35,14 +35,52 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
   @Published private(set) var isVisible = false
   @Published var isMaximized = false
   private var monitor: Task<Void, Never>?
+  /// Tabs from the last run, reopened the first time the panel is shown.
+  private var savedTabs: SavedSession?
 
   override private init() {
     super.init()
     NotificationCenter.default.addObserver(
       forName: NSApplication.willTerminateNotification, object: nil, queue: .main
     ) { _ in
-      MainActor.assumeIsolated { TerminalSessions.shared.terminateAll() }
+      MainActor.assumeIsolated {
+        TerminalSessions.shared.saveSession()
+        TerminalSessions.shared.terminateAll()
+      }
     }
+    guard BrowserModel.keepsSession,
+      let data = UserDefaults.standard.data(forKey: Self.sessionKey),
+      let saved = try? JSONDecoder().decode(SavedSession.self, from: data), !saved.tabs.isEmpty
+    else { return }
+    savedTabs = saved
+    if saved.visible { show() }
+  }
+
+  // MARK: Session restore
+
+  private static let sessionKey = "terminal.session"
+
+  private struct SavedSession: Codable {
+    struct Tab: Codable {
+      var directory: String?
+      var title: String?
+    }
+    var tabs: [Tab]
+    var selected: Int
+    var visible: Bool
+  }
+
+  private func saveSession() {
+    guard BrowserModel.keepsSession else { return }
+    let saved = SavedSession(
+      tabs: tabs.map { .init(directory: workingDirectory(of: $0), title: $0.customTitle) },
+      selected: tabs.firstIndex { $0.id == selectedID } ?? 0, visible: isVisible)
+    UserDefaults.standard.set(try? JSONEncoder().encode(saved), forKey: Self.sessionKey)
+  }
+
+  private func restoreSession(_ saved: SavedSession) {
+    for tab in saved.tabs { newTab(in: tab.directory, title: tab.title) }
+    if tabs.indices.contains(saved.selected) { select(tabs[saved.selected]) }
   }
 
   var selected: TerminalTab? { tabs.first { $0.id == selectedID } ?? tabs.first }
@@ -51,7 +89,14 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
 
   func show() {
     isVisible = true
-    if tabs.isEmpty { newTab() } else if let selected { focus(selected) }
+    if tabs.isEmpty, let saved = savedTabs {
+      savedTabs = nil
+      restoreSession(saved)
+    } else if tabs.isEmpty {
+      newTab()
+    } else if let selected {
+      focus(selected)
+    }
   }
 
   func hide() {
@@ -61,7 +106,7 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
     }
   }
 
-  func newTab() {
+  func newTab(in directory: String? = nil, title: String? = nil) {
     let view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 320))
     view.font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
     view.nativeBackgroundColor = Self.background
@@ -69,6 +114,7 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
     view.caretColor = NSColor(srgbRed: 0.42, green: 0.82, blue: 0.74, alpha: 1)
     view.processDelegate = self
     let tab = TerminalTab(view: view)
+    tab.customTitle = title
     tabs.append(tab)
     selectedID = tab.id
     isVisible = true
@@ -77,7 +123,7 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
     tab.program = name
     view.startProcess(
       executable: shell, environment: Self.environment(shell: shell), execName: "-\(name)",
-      currentDirectory: Self.startDirectory())
+      currentDirectory: directory.flatMap(Self.existingDirectory) ?? Self.startDirectory())
     startMonitor()
     focus(tab)
   }
@@ -210,14 +256,16 @@ final class TerminalSessions: NSObject, ObservableObject, LocalProcessTerminalVi
 
   static func startDirectory() -> String {
     let stored = (UserDefaults.standard.string(forKey: directoryKey) ?? "") as NSString
-    let path = stored.expandingTildeInPath
+    return existingDirectory(stored.expandingTildeInPath)
+      ?? FileManager.default.homeDirectoryForCurrentUser.path
+  }
+
+  private static func existingDirectory(_ path: String) -> String? {
     var isDirectory: ObjCBool = false
-    if !path.isEmpty, FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+    guard !path.isEmpty, FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
       isDirectory.boolValue
-    {
-      return path
-    }
-    return FileManager.default.homeDirectoryForCurrentUser.path
+    else { return nil }
+    return path
   }
 
   private static func loginShell() -> String {

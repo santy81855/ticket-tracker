@@ -39,6 +39,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
       for cookie in Self.savedSessionCookies() { await store.setCookie(cookie) }
       store.add(self)
     }
+    if Self.keepsSession { restoreSession() }
     fileWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
       MainActor.assumeIsolated {
         let browser = BrowserModel.shared
@@ -62,10 +63,10 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     view.uiDelegate = self
     let tab = BrowserTab(webView: view)
     tab.observations = [
-      view.observe(\.url) { _, _ in MainActor.assumeIsolated { BrowserModel.shared.sync() } },
-      view.observe(\.title) { _, _ in MainActor.assumeIsolated { BrowserModel.shared.sync() } },
-      view.observe(\.isLoading) { _, _ in
-        MainActor.assumeIsolated { BrowserModel.shared.sync() }
+      view.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.sync() } },
+      view.observe(\.title) { [weak self] _, _ in MainActor.assumeIsolated { self?.sync() } },
+      view.observe(\.isLoading) { [weak self] _, _ in
+        MainActor.assumeIsolated { self?.sync() }
       },
     ]
     return tab
@@ -110,7 +111,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let tab: BrowserTab
     if let target {
       tab = target
-    } else if selected.webView.url == nil, selected.pendingFile == nil {
+    } else if selected.webView.url == nil, selected.pendingFile == nil, selected.queued == nil {
       tab = selected
     } else {
       tab = makeTab()
@@ -137,6 +138,67 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   }
 
   private static let folderKey = "browser.lastFileFolder"
+
+  // MARK: Session restore
+
+  private static let sessionKey = "browser.session"
+  /// Only the installed app remembers tabs, so validation and preview builds start clean.
+  static var keepsSession: Bool {
+    !(Bundle.main.bundleIdentifier ?? "").hasPrefix("com.tickettracker.local.")
+  }
+
+  private struct SavedSession: Codable {
+    var tabs: [String]
+    var selected: Int
+  }
+
+  private func restoreSession() {
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+    ) { _ in
+      MainActor.assumeIsolated { BrowserModel.shared.saveSession() }
+    }
+    guard let data = UserDefaults.standard.data(forKey: Self.sessionKey),
+      let saved = try? JSONDecoder().decode(SavedSession.self, from: data)
+    else { return }
+    var restored: [BrowserTab] = []
+    for entry in saved.tabs {
+      let tab = restored.isEmpty ? tabs[0] : makeTab()
+      if entry.hasPrefix("/") {
+        guard FileManager.default.fileExists(atPath: entry) else { continue }
+        let url = URL(fileURLWithPath: entry)
+        tab.pendingFile = url
+        tab.webView.load(URLRequest(url: DocumentScheme.url(for: url)))
+      } else if let url = URL(string: entry) {
+        tab.queued = url
+        Task { @MainActor in
+          await restore?.value
+          tab.queued = nil
+          tab.webView.load(URLRequest(url: url))
+        }
+      } else {
+        continue
+      }
+      restored.append(tab)
+    }
+    guard !restored.isEmpty else { return }
+    tabs = restored
+    select(restored[min(max(saved.selected, 0), restored.count - 1)])
+  }
+
+  private func saveSession() {
+    var entries: [String] = []
+    var selectedIndex = 0
+    for tab in tabs {
+      guard
+        let entry = tab.file?.path ?? tab.queued?.absoluteString ?? tab.webView.url?.absoluteString
+      else { continue }
+      if tab.id == selectedID { selectedIndex = entries.count }
+      entries.append(entry)
+    }
+    let data = try? JSONEncoder().encode(SavedSession(tabs: entries, selected: selectedIndex))
+    UserDefaults.standard.set(data, forKey: Self.sessionKey)
+  }
 
   func chooseFile() {
     let panel = NSOpenPanel()
@@ -351,7 +413,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
   }
 
   func openIfEmpty(_ text: String) {
-    if webView.url == nil, selected.pendingFile == nil { open(text) }
+    if webView.url == nil, selected.pendingFile == nil, selected.queued == nil { open(text) }
   }
 
   // Links that ask for a new window open in a new tab.
@@ -377,6 +439,8 @@ final class BrowserTab: Identifiable {
   var observations: [NSKeyValueObservation] = []
   /// The file being loaded into this tab, and the version of the file it last rendered.
   var pendingFile: URL?
+  /// A restored page waiting for saved sign-in cookies before it loads.
+  var queued: URL?
   var shown: (path: String, modified: Date?) = ("", nil)
   init(webView: WKWebView) { self.webView = webView }
 
@@ -390,7 +454,7 @@ final class BrowserTab: Identifiable {
 
   var title: String {
     if let title = webView.title, !title.isEmpty { return title }
-    return webView.url?.host ?? "New tab"
+    return (webView.url ?? queued)?.host ?? "New tab"
   }
 }
 

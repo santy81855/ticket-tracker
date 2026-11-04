@@ -30,7 +30,8 @@ while you work.
 - **Workflow editor:** customize steps, owners, paths, and nudges, then test-drive
   a sample ticket before publishing.
 - **Built-in terminal and browser:** tabbed terminal and an in-app browser for your
-  Jira board, so everything is in one window.
+  Jira board, so everything is in one window. Browser and terminal tabs are restored
+  on relaunch (terminals reopen in the same folders with fresh shells).
 - **File viewer:** open ticket plans and other Markdown, text, PDF or image files
   in browser tabs (⌘O, drag and drop, or type a path). Markdown is rendered and
   refreshes live while the file is edited.
